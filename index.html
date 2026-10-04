@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101214">
+  <meta name="description" content="Mark video segments with frame-based in and out points, total their durations, and export your timing data.">
+  <title>Segment Timer</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="workspaces.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">Segment Timer</span>
+    <div class="top-actions"><span class="local-note">Video stays on your device</span><button id="openVideo" class="button primary"><span aria-hidden="true">＋</span> Open video</button></div>
+    <input id="fileInput" type="file" accept="video/*,.mov,.mkv,.m4v" hidden>
+    <input id="projectInput" type="file" accept="application/json,.json" hidden>
+  </header>
+  <main>
+    <div class="workspace-heading"><div><span class="eyebrow">WORKSPACE</span><h1 id="projectTitle">Untitled session</h1></div><div class="session-options"><div class="file-meta" id="fileMeta">Open a video to start marking load segments.</div><label class="display-control" for="durationDisplay">Duration display <select id="durationDisplay"><option value="milliseconds">Milliseconds · .000</option><option value="frames">Frames · HH:MM:SS:FF</option></select></label></div></div>
+    <div id="message" role="status" aria-live="polite" hidden></div>
+    <section class="workspace" aria-label="Video and segment controls">
+      <aside class="shortcut-key" aria-label="Keyboard shortcuts">
+        <h2>Keyboard shortcuts</h2>
+        <dl>
+          <div><dt><kbd>Space</kbd></dt><dd>Play / pause</dd></div>
+          <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Step 1 frame</dd></div>
+          <div><dt><kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd></dt><dd>Step 10 frames</dd></div>
+          <div><dt><kbd>I</kbd></dt><dd>Set in point</dd></div>
+          <div><dt><kbd>O</kbd></dt><dd>Set out point</dd></div>
+          <div><dt><kbd>Enter</kbd></dt><dd>Add / save segment</dd></div>
+          <div><dt><kbd>Home</kbd> / <kbd>End</kbd></dt><dd>Start / end of video</dd></div>
+          <div><dt><kbd>Esc</kbd></dt><dd>Clear draft / cancel edit</dd></div>
+          <div><dt>Scroll wheel</dt><dd>Step 1 frame on timeline</dd></div>
+          <div><dt><kbd>Shift</kbd> + scroll</dt><dd>Pan timeline</dd></div>
+        </dl>
+        <p>On a focused in/out handle, arrow keys adjust that point; Shift steps 10 frames.</p>
+        <p>Shortcuts pause while typing. On a focused button, Space / Enter activates that button.</p>
+      </aside>
+      <div class="viewer-panel panel">
+        <div class="panel-heading"><span><span class="tiny-square" aria-hidden="true"></span> SOURCE MONITOR</span><span id="resolution">NO VIDEO LOADED</span></div>
+        <div class="video-stage" id="dropZone">
+          <video id="video" playsinline preload="auto" hidden></video>
+          <div class="empty-video" id="emptyVideo">
+            <h2>Open a video to begin</h2><p>Drop a video here to start marking segments.</p><button class="button secondary" id="chooseVideo">Choose video</button><span class="format-note">MP4, WebM, MOV · browser-supported codecs</span>
+          </div>
+          <div class="drop-overlay">Drop video to open</div>
+        </div>
+        <div class="transport">
+          <div class="time-display"><span id="currentTime">00:00:00:00</span><span class="time-divider">/</span><span id="durationTime" class="muted">00:00:00:00</span></div>
+          <div class="transport-buttons"><button id="prevFrame" class="icon-button" aria-label="Previous frame" title="Previous frame (←)" disabled>│◀</button><button id="playPause" class="play-button" aria-label="Play" title="Play / pause (Space)" disabled>▶</button><button id="nextFrame" class="icon-button" aria-label="Next frame" title="Next frame (→)" disabled>▶│</button></div>
+          <div class="volume-control"><label for="volumeSlider">Volume</label><input id="volumeSlider" type="range" min="0" max="100" step="1" value="100" aria-valuetext="100%"><output id="volumeValue" for="volumeSlider">100%</output></div>
+          <span id="framePosition" class="frame-position">FRAME —</span>
+        </div>
+        <section class="segment-summary" aria-label="Segment times">
+          <div class="summary-heading"><h2>Segment times <span id="summaryCount" class="count-badge">0</span></h2><span id="summaryFormat">HH:MM:SS.mmm</span></div>
+          <p id="summaryEmpty">Your marked segment times will appear here.</p>
+          <ol id="segmentTimes" class="segment-times" aria-label="Segment durations" hidden></ol>
+        </section>
+      </div>
+      <aside class="inspector panel">
+        <div class="panel-heading"><span id="selectionHeading">NEW SEGMENT</span><button id="cancelEdit" class="text-button" hidden>Cancel edit</button></div>
+        <div class="selection-body">
+          <label class="field-label" for="segmentName">Segment name</label><input id="segmentName" type="text" maxlength="120" placeholder="e.g. Loading screen 01" disabled>
+          <div class="mark-row"><label for="inTime">IN <kbd>I</kbd></label><button id="markIn" class="button mark-button" disabled>Set at playhead</button></div>
+          <div class="point-input"><span class="point-color in-color"></span><input id="inTime" class="time-input" type="text" value="00:00:00:00" aria-label="In point timecode" spellcheck="false" disabled><label class="frame-input-label">FRAME <input id="inFrame" type="number" value="0" min="0" step="1" aria-label="In point frame" disabled></label></div>
+          <div class="mark-row"><label for="outTime">OUT <kbd>O</kbd></label><button id="markOut" class="button mark-button" disabled>Set at playhead</button></div>
+          <div class="point-input"><span class="point-color out-color"></span><input id="outTime" class="time-input" type="text" value="00:00:00:00" aria-label="Out point timecode" spellcheck="false" disabled><label class="frame-input-label">FRAME <input id="outFrame" type="number" value="0" min="0" step="1" aria-label="Out point frame" disabled></label></div>
+          <div class="selection-duration"><span>Selection duration</span><strong id="selectionDuration">—</strong></div>
+          <button id="addSegment" class="button primary add-segment" disabled><span>＋ Add segment</span><kbd>↵</kbd></button>
+          <p class="selection-hint" id="selectionHint">Mark an in point and an out point to create a segment.</p>
+        </div>
+        <div class="total-block"><span class="eyebrow">TOTAL MARKED TIME</span><div class="total-time" id="totalTime">00:00:00<span>.000</span></div><div class="total-detail"><span id="totalFrames">0 frames</span><span id="totalCount">0 segments</span></div></div>
+      </aside>
+    </section>
+    <section class="timeline-panel panel" aria-label="Video timeline">
+      <div class="timeline-toolbar"><div class="timeline-title">TIMELINE <span class="badge" id="timelineBadge">NO SOURCE</span></div><div class="timeline-settings"><label for="fpsSelect">Source FPS</label><select id="fpsSelect" title="Set this to your source video's frame rate"><option value="24000/1001">23.976</option><option value="24">24</option><option value="25">25</option><option value="30000/1001">29.97</option><option value="30" selected>30</option><option value="50">50</option><option value="60000/1001">59.94</option><option value="60">60</option><option value="120">120</option></select><span class="toolbar-divider"></span><label for="zoom">Zoom</label><input id="zoom" type="range" min="1" max="12" value="1" step="0.5"><button class="text-button" id="fitTimeline">Fit</button></div></div>
+      <div class="timeline-scroll" id="timelineScroll"><div id="timeline" class="timeline" role="slider" tabindex="0" aria-label="Video playhead in frames" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-disabled="true">
+        <div class="ruler" id="ruler"></div><div class="source-track" id="sourceTrack"><div id="thumbnails" class="thumbnails"></div><span class="track-label" id="trackLabel">V1 <span>Your video will appear here</span></span></div><div class="segment-track" id="segmentTrack"><span class="empty-track" id="emptyTrack">Marked segments</span></div>
+        <div id="draftRange" class="draft-range" hidden><button id="inHandle" class="range-handle in-handle" aria-label="Drag in point; use arrow keys for one frame">[</button><button id="outHandle" class="range-handle out-handle" aria-label="Drag out point; use arrow keys for one frame">]</button></div>
+        <div id="playhead" class="playhead" hidden><span></span></div>
+      </div></div>
+      <div class="timeline-footer"><span id="fpsHelp">Set source FPS to match your video for accurate frame marks.</span><span>Scroll wheel: 1 frame · Shift + wheel: pan · Out point is exclusive</span></div>
+    </section>
+    <section class="segments-panel panel" aria-label="Marked segments">
+      <div class="segments-heading"><div><h2>Marked segments <span id="segmentCount" class="count-badge">0</span></h2><p>Edit segment names and exact in/out points below.</p></div><div class="export-actions"><button id="importProject" class="button subtle">Import JSON</button><select id="exportFormat" aria-label="Export format"><option value="csv">CSV spreadsheet</option><option value="json">JSON project</option></select><button id="exportData" class="button secondary" disabled><span aria-hidden="true">↓</span> Export data</button></div></div>
+      <div id="emptySegments" class="empty-segments"><span class="segment-symbol" aria-hidden="true">[&nbsp;—&nbsp;]</span><div><strong>No segments yet</strong><p>Scrub to a moment, press <kbd>I</kbd> and <kbd>O</kbd> to mark it, then <kbd>Enter</kbd> to add it.</p></div></div>
+      <div class="table-scroll" id="tableWrap" hidden><table><thead><tr><th scope="col">#</th><th scope="col">SEGMENT</th><th scope="col">IN POINT</th><th scope="col">OUT POINT</th><th scope="col">DURATION</th><th scope="col">FRAMES</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody id="segmentRows"></tbody></table></div>
+      <div class="segments-footer"><span>Overlapping segments are counted separately.</span><span>Export JSON to save a session and reopen it later.</span></div>
+    </section>
+    <footer class="page-footer"><span>Segment Timer</span><div><kbd>Space</kbd> Play / pause <kbd>←</kbd><kbd>→</kbd> Step frame <kbd>Shift + ← / →</kbd> 10 frames</div></footer>
+  </main>
+</body>
+</html>
