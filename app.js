@@ -1,15 +1,80 @@
+import { parseRemoteUrl, loadTwitchApi, createTwitchPlayer } from './twitch.js';
+import { loadYouTubeApi, youtubeError } from './youtube.js';
 import { parseRate, timecode, parseTimecode, elapsed, frameCount, validateSegment, summarize, makeCsv, formatDuration } from './timing.js';
 
 export function createClipWorkspace(root, isActive) {
 const $ = id => root.querySelector('[data-control="' + id + '"]');
 const video = $('video');
+// Both remote providers implement the same playback contract.
+let remoteKind = 'youtube', remoteSeek = null;
+let youtube = null, youtubeReady = false, youtubeTimer = null, youtubeStarted = false;
+function clearYouTube() {
+  clearInterval(youtubeTimer); youtubeTimer = null;
+  remoteSeek = null; $('previewStatus').hidden = true;
+  const previous = youtube; youtube = null; youtubeReady = false;
+  if (previous) previous.destroy();
+  $('youtubeStage').replaceChildren(); $('youtubeStage').hidden = true;
+  $('youtubeNote').hidden = true;
+  $('sourceTrack').classList.remove('youtube-source');
+  $('dropZone').classList.remove('twitch-source');
+  $('youtubeStage').classList.remove('twitch-too-small');
+  const hint = root.querySelector('.twitch-size-hint'); if (hint) hint.hidden = true;
+}
+function remoteSeekPending() {
+  if (youtubeReady && remoteKind === 'twitch' && youtube.isPreviewSeeking?.()) return true;
+  if (!remoteSeek || !youtubeReady) return false;
+  if (Math.abs(youtube.getCurrentTime() * fps - remoteSeek.frame) <= 1 || Date.now() >= remoteSeek.until) {
+    remoteSeek = null; return false;
+  }
+  return true;
+}
+function playing() { return youtube ? youtubeReady && youtube.getPlayerState() === 1 : !video.paused; }
+function syncSpeed() {
+  if (youtubeReady && remoteKind === 'twitch') { $('playbackSpeed').textContent = 'Player speed'; return; }
+  const rate = youtubeReady ? youtube.getPlaybackRate() : video.playbackRate;
+  $('playbackSpeed').textContent = Number(rate.toFixed(2)) + '×';
+}
+function changeSpeed(delta) {
+  if (youtubeReady && remoteKind === 'twitch') {
+    notice('Change Twitch playback speed in the player’s settings. Twitch does not expose speed controls to this site.'); return;
+  }
+  const rate = youtubeReady ? youtube.getPlaybackRate() : video.playbackRate;
+  const target = Math.max(0.25, Math.min(4, Math.round((rate + delta) * 4) / 4));
+  if (youtubeReady) {
+    const supported = youtube.getAvailablePlaybackRates();
+    if (!supported.includes(target)) {
+      notice('YouTube does not offer ' + target + '× for this video. Available speeds: ' + supported.join('×, ') + '×.');
+      return;
+    }
+    youtube.setPlaybackRate(target);
+  } else video.playbackRate = target;
+  syncSpeed();
+}
+video.addEventListener('ratechange', syncSpeed);
+function closeSourcePicker() {
+  if (youtubeReady && youtube) $('youtubeStage').hidden = false;
+  $('emptyVideo').hidden = true; $('cancelSource').hidden = true;
+  $('dropZone').classList.remove('choosing-source');
+}
+$('changeSource').addEventListener('click', () => {
+  pause(true); if (remoteKind === 'twitch' && youtube) $('youtubeStage').hidden = true;
+  $('emptyVideo').hidden = false; $('cancelSource').hidden = false;
+  $('dropZone').classList.add('choosing-source');
+});
+$('cancelSource').addEventListener('click', closeSourcePicker);
+
 function syncVolume() {
-  const percent = video.muted ? 0 : Math.round(video.volume * 100);
+  const percent = youtubeReady ? (youtube.isMuted() ? 0 : Math.round(youtube.getVolume())) : video.muted ? 0 : Math.round(video.volume * 100);
   $('volumeSlider').value = percent;
   $('volumeSlider').setAttribute('aria-valuetext', `${percent}%`);
   $('volumeValue').textContent = `${percent}%`;
 }
 $('volumeSlider').addEventListener('input', event => {
+  if (youtubeReady) {
+    youtube.setVolume(Number(event.target.value));
+    if (Number(event.target.value) === 0) youtube.mute(); else youtube.unMute();
+    syncVolume(); return;
+  }
   video.volume = Number(event.target.value) / 100;
   video.muted = video.volume === 0;
   syncVolume();
@@ -128,9 +193,15 @@ function renderRows() {
     const frames = row.insertCell(); frames.className = 'frames-cell'; frames.textContent = (segment.out - segment.in).toLocaleString();
     const actions = row.insertCell();
     const edit = document.createElement('button'); edit.className = 'row-action'; edit.textContent = 'Edit'; edit.disabled = !ready; edit.setAttribute('aria-label', `Edit segment ${index + 1}`); edit.addEventListener('click', () => editSegment(index));
-    const remove = document.createElement('button'); remove.className = 'row-action remove-row'; remove.textContent = '×'; remove.setAttribute('aria-label', `Delete segment ${index + 1}`); remove.addEventListener('click', () => { segments.splice(index, 1); if (editing === index) resetDraft(); else if (editing !== null && editing > index) editing--; renderSegments(); });
+    const remove = document.createElement('button'); remove.className = 'row-action remove-row'; remove.textContent = '×'; remove.setAttribute('aria-label', `Delete segment ${index + 1}`); remove.addEventListener('click', () => removeSegment(index));
     actions.append(edit, remove); $('segmentRows').append(row);
   });
+}
+function removeSegment(index) {
+  segments.splice(index, 1);
+  if (editing === index) resetDraft();
+  else if (editing !== null && editing > index) editing--;
+  renderSegments();
 }
 function renderTimeList() {
   const list = $('segmentTimes'), scrollTop = list.scrollTop;
@@ -148,7 +219,12 @@ function renderTimeList() {
     const name = Object.assign(document.createElement('span'), { className: 'summary-name', textContent: segment.name });
     const duration = Object.assign(document.createElement('strong'), { textContent: displayDuration(segment.out - segment.in) });
     button.append(number, name, duration); button.addEventListener('click', () => editSegment(index));
-    item.append(button); list.append(item);
+    const remove = document.createElement('button');
+    remove.type = 'button'; remove.className = 'summary-remove'; remove.textContent = '×';
+    remove.setAttribute('aria-label', `Delete segment ${index + 1}: ${segment.name}`);
+    remove.title = `Delete ${segment.name}`;
+    remove.addEventListener('click', () => removeSegment(index));
+    item.append(button, remove); list.append(item);
   });
   list.scrollTop = scrollTop;
 }
@@ -165,52 +241,70 @@ function setPoint(point, frame) {
   if (!Number.isSafeInteger(frame) || frame < 0 || frame > limit) { notice(`The ${point} frame must be a whole number from 0 to ${limit}.`); renderPoints(); return; }
   draft[point] = frame; notice(); renderPoints();
 }
-function pause() { video.pause(); updatePlayback(); }
+function pause(cancelPreview = false) {
+  if (cancelPreview) youtube?.cancelPreview?.();
+  if (youtubeReady) {
+    if (ready && playing() && !remoteSeekPending()) { current = Math.min(total, Math.max(0, Math.floor(youtube.getCurrentTime() * fps))); renderCurrent(); }
+    youtube.pauseVideo();
+  } else video.pause();
+  updatePlayback();
+}
 function seekFrame(frame) {
   if (!ready) return;
-  pause(); current = Math.min(total, Math.max(0, Math.round(frame)));
+  if (!(youtubeReady && remoteKind === 'twitch')) pause();
+  current = Math.min(total, Math.max(0, Math.round(frame)));
   // Seek just inside the selected frame, avoiding floating-point boundary ambiguity.
-  video.currentTime = Math.max(0, Math.min(video.duration - 0.00001, (current + 0.01) / fps));
+  if (youtubeReady) {
+    remoteSeek = { frame: current, until: Date.now() + 2000 };
+    const seconds = Math.min(Math.max(0, source.duration - 0.001), current / fps);
+    if (remoteKind === 'twitch') youtube.seekPreview(seconds);
+    else { youtube.seekTo(seconds, true); youtube.pauseVideo(); }
+  } else video.currentTime = Math.max(0, Math.min(video.duration - 0.00001, (current + 0.01) / fps));
   renderCurrent();
 }
 async function togglePlay() {
+  if (youtubeReady) {
+    if (playing()) pause();
+    else { if (current >= total && ready) youtube.seekTo(0, true); youtubeStarted = true; youtube.playVideo(); }
+    updatePlayback(); return;
+  }
   if (!ready) return;
   if (!video.paused) { pause(); return; }
   if (current >= total) { current = 0; video.currentTime = 0; }
   try { await video.play(); } catch { notice('The browser could not play this video. Try another browser-supported MP4 or WebM file.'); }
   updatePlayback();
 }
-function updatePlayback() { $('playPause').textContent = video.paused ? '▶' : 'Ⅱ'; $('playPause').setAttribute('aria-label', video.paused ? 'Play' : 'Pause'); }
+function updatePlayback() { $('playPause').textContent = !playing() ? '▶' : 'Ⅱ'; $('playPause').setAttribute('aria-label', !playing() ? 'Play' : 'Pause'); }
 function trackPlayback() {
   if (!video.requestVideoFrameCallback) return;
   playbackCallback = video.requestVideoFrameCallback((_, metadata) => {
-    if (!video.paused && ready) { current = Math.min(total - 1, Math.max(0, Math.round(metadata.mediaTime * fps))); renderCurrent(); }
+    if (!youtube && !video.paused && ready) { current = Math.min(total - 1, Math.max(0, Math.round(metadata.mediaTime * fps))); renderCurrent(); }
     trackPlayback();
   });
 }
-video.addEventListener('timeupdate', () => { if (!video.paused && !video.requestVideoFrameCallback) { current = Math.min(total - 1, Math.floor(video.currentTime * fps)); renderCurrent(); } });
+video.addEventListener('timeupdate', () => { if (!youtube && !video.paused && !video.requestVideoFrameCallback) { current = Math.min(total - 1, Math.floor(video.currentTime * fps)); renderCurrent(); } });
 video.addEventListener('play', updatePlayback); video.addEventListener('pause', updatePlayback);
-video.addEventListener('ended', () => { current = total; renderCurrent(); updatePlayback(); });
+video.addEventListener('ended', () => { if (youtube) return; current = total; renderCurrent(); updatePlayback(); });
 function enableControls() {
-  for (const id of ['prevFrame', 'playPause', 'nextFrame', 'segmentName', 'inTime', 'outTime', 'inFrame', 'outFrame', 'markIn', 'markOut']) $(id).disabled = !ready;
+  for (const id of ['prevFrame', 'playPause', 'nextFrame', 'segmentName', 'inTime', 'outTime', 'inFrame', 'outFrame', 'markIn', 'markOut', 'changeSource']) $(id).disabled = !ready;
   $('timeline').setAttribute('aria-disabled', !ready); $('timeline').setAttribute('aria-valuemax', total);
 }
 async function loadVideo(file) {
   if (!file) return;
   if (!file.type.startsWith('video/') && !/\.(mp4|webm|mov|mkv|m4v|avi|ogg|ogv)$/i.test(file.name)) { notice('Choose a video file, such as MP4, WebM, or MOV.'); return; }
-  if (awaitingSource && file.name !== source.name) { notice(`This project uses “${source.name}”. Open that video to reconnect the saved marks.`); return; }
+  if (awaitingSource && (['youtube', 'twitch'].includes(source.kind) || file.name !== source.name)) { notice(`This project uses “${source.name}”. Open that video to reconnect the saved marks.`); return; }
   if (!awaitingSource && segments.length && !confirm('Open a different video and clear this session? Export JSON first if you want to keep these marks.')) return;
-  const generation = ++loadSerial; ready = false; pause(); enableControls();
+  const generation = ++loadSerial; ready = false; pause(); clearYouTube(); enableControls();
   if (thumbnailVideo) { thumbnailVideo.pause(); thumbnailVideo.removeAttribute('src'); thumbnailVideo.load(); thumbnailVideo = null; }
   if (sourceUrl) URL.revokeObjectURL(sourceUrl);
-  sourceUrl = URL.createObjectURL(file); video.src = sourceUrl; video.hidden = false; $('emptyVideo').hidden = true;
+  sourceUrl = URL.createObjectURL(file); video.src = sourceUrl; video.hidden = false; closeSourcePicker(); video.playbackRate = 1; syncSpeed();
   $('thumbnails').replaceChildren(); notice('Opening video…');
   video.onloadedmetadata = () => {
     if (generation !== loadSerial) return;
     if (!Number.isFinite(video.duration) || video.duration <= 0) { failVideo('This video has no usable duration. Try a seekable MP4 or WebM file.'); return; }
     if (awaitingSource && Math.abs(source.duration - video.duration) > 1 / fps) { failVideo('The video duration does not match the saved project. Open the original video.'); return; }
     if (!awaitingSource) { segments = []; serial = 1; }
-    source = { name: file.name, size: file.size, duration: video.duration, width: video.videoWidth, height: video.videoHeight };
+    source = { kind: 'local', name: file.name, size: file.size, duration: video.duration, width: video.videoWidth, height: video.videoHeight };
     total = frameCount(source.duration, fps); current = 0; ready = true; awaitingSource = false;
     $('projectTitle').textContent = file.name.replace(/\.[^.]+$/, '');
     $('fileMeta').textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)} MB`;
@@ -225,8 +319,144 @@ async function loadVideo(file) {
   video.onerror = () => { if (generation === loadSerial) failVideo('This video’s format or codec is not supported by this browser. Try H.264 MP4 or WebM.'); };
   video.load();
 }
+
+async function loadRemoteVideo(value, restore = false) {
+  let link;
+  try { link = parseRemoteUrl(value); } catch (err) { notice(err.message); return; }
+  if (awaitingSource && (!source || source.kind !== link.kind || source.videoId !== link.id)) {
+    notice('Reconnect the original source before replacing this project, or import another project.'); return;
+  }
+  if (!restore && !awaitingSource && segments.length && !confirm('Open a different video and clear this session? Export JSON first if you want to keep these marks.')) return;
+  const provider = link.kind === 'twitch' ? 'Twitch' : 'YouTube';
+  const reconnect = restore || awaitingSource;
+  const savedSource = reconnect ? { ...source } : null;
+  const generation = ++loadSerial;
+  ready = false; pause(); clearYouTube(); video.onloadedmetadata = null; video.onerror = null;
+  video.removeAttribute('src'); video.load(); video.hidden = true;
+  if (thumbnailVideo) { thumbnailVideo.pause(); thumbnailVideo.removeAttribute('src'); thumbnailVideo.load(); thumbnailVideo = null; }
+  if (sourceUrl) { URL.revokeObjectURL(sourceUrl); sourceUrl = null; }
+  $('thumbnails').replaceChildren(); enableControls();
+  if (!reconnect) {
+    source = null; segments = []; serial = 1; total = 0; current = 0; resetDraft(); renderSegments(); renderCurrent(); renderRuler();
+  }
+  $('youtubeUrl').value = link.url;
+  closeSourcePicker(); $('youtubeStage').hidden = false; $('youtubeNote').hidden = false;
+  remoteKind = link.kind;
+  $('dropZone').classList.toggle('twitch-source', link.kind === 'twitch');
+  notice('Connecting to ' + provider + '…');
+  try {
+    if (link.kind === 'twitch' && $('dropZone').clientWidth < 400) throw new Error('Twitch needs a source monitor at least 400 pixels wide. Widen the window or use Single Clip Mode, then load the VOD again.');
+    const api = await (link.kind === 'twitch' ? loadTwitchApi() : loadYouTubeApi());
+    if (generation !== loadSerial) return;
+    const target = document.createElement('div'); $('youtubeStage').append(target);
+    youtubeStarted = false;
+    let startedAt = Date.now();
+    function updateYouTube() {
+      if (generation !== loadSerial) return;
+      if (!youtubeReady) {
+        if (Date.now() - startedAt > 30000) failVideo('The ' + provider + ' player did not respond. Check your connection or try another video.');
+        return;
+      }
+      const duration = youtube.getDuration();
+      if (!ready && Number.isFinite(duration) && duration > 0) {
+        if (savedSource && Math.abs(savedSource.duration - duration) > 1 / fps) {
+          failVideo('The ' + provider + ' video duration no longer matches this project. Your saved marks are retained.'); return;
+        }
+        source = { kind: link.kind, videoId: link.id, url: link.url, name: savedSource?.name || provider + ' ' + link.id, duration, size: 0, width: 0, height: 0 };
+        total = frameCount(duration, fps); current = Math.min(total - 1, Math.max(0, Math.floor(youtube.getCurrentTime() * fps))); ready = true; awaitingSource = false;
+        $('projectTitle').textContent = source.name;
+        $('fileMeta').textContent = link.url;
+        $('resolution').textContent = provider.toUpperCase() + ' · APPROXIMATE SEEKING';
+        $('durationTime').textContent = timecode(total, fps); $('timelineBadge').textContent = fps.toFixed(fps % 1 ? 3 : 0) + ' FPS';
+        $('trackLabel').textContent = provider + (link.kind === 'youtube' ? ' · Cover image only' : ' VOD · Frame previews unavailable') + ' · Scrub to mark in/out';
+        $('sourceTrack').classList.add('loaded', 'youtube-source');
+        if (link.kind === 'youtube') {
+        const cover = document.createElement('img');
+        cover.src = 'https://i.ytimg.com/vi/' + link.id + '/hqdefault.jpg';
+        cover.alt = 'YouTube video cover; not a preview of this timeline position';
+        cover.draggable = false;
+        cover.addEventListener('error', () => { cover.hidden = true; });
+        $('thumbnails').replaceChildren(cover);
+        } else { $('thumbnails').replaceChildren(); $('sourceTrack').classList.remove('youtube-source'); }
+        enableControls(); resetDraft(); renderCurrent(); renderSegments(); renderRuler();
+        notice();
+      }
+      if (ready) {
+        if (Math.abs(duration - source.duration) > 1 && duration > 0) { failVideo('Live streams or changing-duration videos are not supported. Use a completed video.'); return; }
+        const state = youtube.getPlayerState();
+        if (state === 1 && !remoteSeekPending()) { current = Math.min(total - 1, Math.max(0, Math.floor(youtube.getCurrentTime() * fps))); renderCurrent(); }
+        if (state === 0 && youtubeStarted) { current = total; renderCurrent(); }
+        updatePlayback(); syncVolume(); syncSpeed();
+      } else if (Date.now() - startedAt > 30000) {
+        failVideo(provider + ' did not provide a usable duration. The VOD may be expired, restricted, or unavailable. Try a completed, publicly playable video.'); return;
+      }
+    }
+    const playerOptions = {
+      width: '100%', height: '100%', videoId: link.id,
+      playerVars: { playsinline: 1, origin: location.origin, controls: 1, disablekb: 1 },
+      events: {
+        onReady: () => {
+          if (generation !== loadSerial) return;
+          youtubeReady = true;
+          youtube.setVolume(Number($('volumeSlider').value));
+          const iframe = youtube.getIframe(); iframe.title = provider + ' source video';
+          iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+          startedAt = Date.now();
+          $('playPause').disabled = false;
+          notice('Press Play in the ' + provider + ' player to load its duration, then start marking segments.');
+          updateYouTube();
+        },
+        onStateChange: event => {
+          if (generation !== loadSerial || !youtubeReady) return;
+          if (event.data === 1) youtubeStarted = true;
+          // Use the reported playback position when pausing with YouTube’s own controls.
+          if (event.data === 2 && ready && !remoteSeekPending()) { current = Math.min(total, Math.max(0, Math.floor(youtube.getCurrentTime() * fps))); renderCurrent(); }
+          updateYouTube();
+        },
+        onPlaybackRateChange: () => { if (generation === loadSerial && youtubeReady) syncSpeed(); },
+        onError: event => { if (generation === loadSerial) failVideo(link.kind === 'twitch' ? 'Twitch could not play this VOD. It may be expired, restricted, or unavailable.' : youtubeError(event.data)); }
+      }
+    };
+    playerOptions.onSeek = () => {
+      if (generation === loadSerial && ready && !remoteSeekPending()) {
+        current = Math.min(total, Math.max(0, Math.floor(youtube.getCurrentTime() * fps))); renderCurrent();
+      }
+    };
+    playerOptions.onPreviewPending = pending => {
+      if (generation === loadSerial) { $('previewStatus').hidden = !pending; if (pending) notice(); }
+    };
+    playerOptions.onPreviewReady = () => {
+      if (generation === loadSerial) { remoteSeek = null; renderCurrent(); }
+    };
+    playerOptions.onPreviewError = message => {
+      if (generation === loadSerial) { remoteSeek = null; notice(message); }
+    };
+    playerOptions.onBlocked = () => { if (generation === loadSerial) notice('Press Play inside the Twitch player to allow playback.'); };
+    youtube = link.kind === 'twitch' ? createTwitchPlayer(api, target, playerOptions) : new api.Player(target, playerOptions);
+    youtubeTimer = setInterval(updateYouTube, 100);
+  } catch (err) { if (generation === loadSerial) failVideo(err.message); }
+}
+$('pasteYoutubeUrl').addEventListener('click', async () => {
+  const button = $('pasteYoutubeUrl'), input = $('youtubeUrl');
+  button.disabled = true;
+  try {
+    const text = (await navigator.clipboard.readText()).trim();
+    if (!text) { notice('Your clipboard is empty. Copy a YouTube or Twitch VOD URL first.'); return; }
+    input.value = text;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    notice();
+  } catch {
+    notice('Clipboard access is unavailable. Paste into the URL field with Ctrl+V or your browser’s Paste command.');
+  } finally {
+    button.disabled = false;
+    input.focus({ preventScroll: true });
+  }
+});
+$('youtubeForm').addEventListener('submit', event => { event.preventDefault(); loadRemoteVideo($('youtubeUrl').value); });
+
 function failVideo(message) {
-  ready = false; video.hidden = true; $('emptyVideo').hidden = false; enableControls(); notice(message); renderPoints();
+  clearYouTube();
+  ready = false; video.hidden = true; $('emptyVideo').hidden = false; $('cancelSource').hidden = true; $('dropZone').classList.remove('choosing-source'); enableControls(); notice(message); renderPoints();
 }
 async function generateThumbnails(url, generation) {
   const helper = document.createElement('video'); thumbnailVideo = helper; helper.muted = true; helper.preload = 'auto'; helper.src = url;
@@ -305,7 +535,7 @@ function endDrag() { drag = null; }
 $('timeline').addEventListener('pointerup', endDrag); $('timeline').addEventListener('pointercancel', endDrag); $('timeline').addEventListener('lostpointercapture', endDrag);
 for (const point of ['in', 'out']) {
   $(`${point}Handle`).addEventListener('keydown', event => {
-    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    if (event.ctrlKey || event.metaKey || event.altKey || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
     event.preventDefault(); event.stopPropagation();
     const delta = (event.key === 'ArrowLeft' ? -1 : 1) * (event.shiftKey ? 10 : 1);
     setPoint(point, (draft[point] ?? 0) + delta);
@@ -333,11 +563,37 @@ $('durationDisplay').addEventListener('change', () => {
 function zoomTimeline() { $('timeline').style.width = `${Number($('zoom').value) * 100}%`; renderRuler(); if (ready) $('timelineScroll').scrollLeft = Math.max(0, current / total * $('timeline').clientWidth - $('timelineScroll').clientWidth / 2); }
 $('zoom').addEventListener('input', zoomTimeline); $('fitTimeline').addEventListener('click', () => { $('zoom').value = 1; zoomTimeline(); });
 new ResizeObserver(renderRuler).observe($('timelineScroll'));
+const twitchSizeHint = document.createElement('p');
+twitchSizeHint.className = 'twitch-size-hint';
+twitchSizeHint.textContent = 'Widen the window or use Single Clip Mode to view Twitch (400 px minimum).';
+twitchSizeHint.hidden = true; $('dropZone').append(twitchSizeHint);
+new ResizeObserver(() => {
+  const tooSmall = !!youtube && remoteKind === 'twitch' && $('dropZone').clientWidth < 400;
+  if (tooSmall && youtubeReady) pause(true);
+  $('youtubeStage').classList.toggle('twitch-too-small', tooSmall);
+  twitchSizeHint.hidden = !tooSmall;
+}).observe($('dropZone'));
+
 document.addEventListener('keydown', event => {
-  if (!isActive() || !ready || event.ctrlKey || event.metaKey || event.altKey || event.target.closest('input,select,textarea,[contenteditable=true]')) return;
+  if (!isActive() || !ready || event.metaKey || event.altKey || event.target.closest('input,select,textarea,[contenteditable=true]')) return;
+  if (event.ctrlKey) {
+    if (['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+      event.preventDefault();
+      const position = playing() ? (youtubeReady ? youtube.getCurrentTime() : video.currentTime) : current / fps;
+      seekFrame(Math.round((position + (event.key === 'ArrowLeft' ? -5 : 5)) * fps));
+    }
+    return;
+  }
+  // A marked segment takes priority over Enter activating a focused transport button.
+  if (event.key === 'Enter' && validDraft()) {
+    event.preventDefault();
+    addSegment();
+    return;
+  }
   if (event.target.closest('button') && [' ', 'Enter'].includes(event.key)) return;
   const key = event.key.toLowerCase();
-  if ([' ', 'i', 'o', 'enter', 'arrowleft', 'arrowright', 'home', 'end', 'escape'].includes(key)) event.preventDefault();
+  if ([' ', 'i', 'o', 's', 'd', 'enter', 'arrowleft', 'arrowright', 'home', 'end', 'escape'].includes(key)) event.preventDefault();
+  if (key === 's' || key === 'd') changeSpeed(key === 's' ? -0.25 : 0.25);
   if (key === ' ') togglePlay();
   if (key === 'i') { pause(); setPoint('in', current); }
   if (key === 'o') { pause(); setPoint('out', current); }
@@ -364,16 +620,21 @@ $('projectInput').addEventListener('change', async event => {
     if (![...$('fpsSelect').options].some(o => o.value === project.frameRate)) throw new Error('This project has an unsupported frame rate.');
     const importedFps = parseRate(project.frameRate), importedSource = project.source;
     if (!importedSource || typeof importedSource.name !== 'string' || importedSource.name.length > 1024 || !Number.isFinite(importedSource.duration) || importedSource.duration <= 0 || importedSource.duration > 7 * 86400) throw new Error('The project source information is invalid.');
+    let importedRemote = null;
+    if (['youtube', 'twitch'].includes(importedSource.kind)) {
+      importedRemote = parseRemoteUrl(importedSource.url);
+      if (importedRemote.kind !== importedSource.kind || importedRemote.id !== importedSource.videoId) throw new Error('The saved video source does not match its URL.');
+    }
     const importedTotal = frameCount(importedSource.duration, importedFps);
     const importedSegments = project.segments.map(s => validateSegment(s, importedTotal));
     if (segments.length && !confirm('Replace the current marks with this JSON project? Export your current session first if you want to keep it.')) return;
-    const matches = ready && source?.name === importedSource.name && Math.abs(source.duration - importedSource.duration) < 1 / importedFps;
+    const matches = ready && (importedRemote ? source?.kind === importedRemote.kind && source.videoId === importedRemote.id : !['youtube', 'twitch'].includes(source?.kind)) && source?.name === importedSource.name && Math.abs(source.duration - importedSource.duration) < 1 / importedFps;
     pause(); fps = importedFps; $('fpsSelect').value = project.frameRate;
     if (['frames', 'milliseconds'].includes(project.durationDisplay)) $('durationDisplay').value = project.durationDisplay;
-    source = { name: importedSource.name, duration: importedSource.duration, size: importedSource.size || 0, width: importedSource.width || 0, height: importedSource.height || 0 };
+    source = { kind: importedRemote ? importedRemote.kind : 'local', ...(importedRemote ? { videoId: importedRemote.id, url: importedRemote.url } : {}), name: importedSource.name, duration: importedSource.duration, size: importedSource.size || 0, width: importedSource.width || 0, height: importedSource.height || 0 };
     total = importedTotal; segments = importedSegments; serial = segments.length + 1; current = 0;
     if (!matches) {
-      ++loadSerial; ready = false; awaitingSource = true; video.removeAttribute('src'); video.load(); video.hidden = true; $('emptyVideo').hidden = false;
+      ++loadSerial; clearYouTube(); ready = false; awaitingSource = true; video.removeAttribute('src'); video.load(); video.hidden = true; $('emptyVideo').hidden = false;
       $('thumbnails').replaceChildren(); $('sourceTrack').classList.remove('loaded'); $('resolution').textContent = 'SOURCE NOT CONNECTED';
       $('trackLabel').textContent = 'V1 · Reconnect source video';
     } else { awaitingSource = false; seekFrame(0); }
@@ -381,6 +642,7 @@ $('projectInput').addEventListener('change', async event => {
     $('durationTime').textContent = timecode(total, fps); $('timelineBadge').textContent = `${fps.toFixed(fps % 1 ? 3 : 0)} FPS`;
     enableControls(); resetDraft(); renderCurrent(); renderSegments(); renderRuler();
     $('fpsHelp').textContent = fps % 1 ? 'Fractional FPS uses non-drop-frame timecode; milliseconds show elapsed time.' : 'Set source FPS to match your video for accurate frame marks.';
+    if (importedRemote && !matches) { await loadRemoteVideo(importedRemote.url, true); return; }
     notice(matches ? 'Project imported. Your saved segments are ready.' : `Project imported. Open “${source.name}” to reconnect the video. Your marks are loaded; video files are not stored in JSON.`);
   } catch (err) { notice(`Could not import: ${err.message}`); }
 });
@@ -388,5 +650,5 @@ window.addEventListener('beforeunload', event => { if (segments.length) { event.
 try { const savedDisplay = localStorage.getItem('load-segment-timer-duration-display'); if (['frames', 'milliseconds'].includes(savedDisplay)) $('durationDisplay').value = savedDisplay; } catch { /* Preferences are optional. */ }
 trackPlayback(); renderPoints(); renderCurrent(); renderTotals(); renderTimeList(); renderRuler();
 
-return { pause, snapshot: () => ({ fps, segments: segments.map(s => ({ ...s })) }) };
+return { pause: () => pause(true), snapshot: () => ({ fps, segments: segments.map(s => ({ ...s })) }) };
 }

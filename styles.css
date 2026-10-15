@@ -23,6 +23,10 @@
 [data-control="summaryEmpty"]{font-size:14px;color:#abb7bd;margin:12px 0}
 .segment-times{list-style:none;margin:0;padding:0;max-height:176px;overflow-y:auto;scrollbar-color:#55644e #151b1e}
 .summary-segment{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:12px;width:100%;text-align:left;align-items:center;padding:10px 8px;border:0;border-top:1px solid #354147;border-radius:0;background:transparent;color:var(--text)}
+.segment-times>li{display:flex;align-items:center;gap:4px;border-top:1px solid #354147}
+.segment-times .summary-segment{flex:1;min-width:0;border-top:0}
+.summary-remove{flex:none;display:grid;place-items:center;width:30px;height:30px;margin-right:4px;padding:0;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--muted);font-size:22px;line-height:1}
+.summary-remove:hover{color:#ffaaa5;background:#3c2527;border-color:#754046}
 .summary-segment:hover:enabled,.summary-segment.active{background:#273223}
 .summary-segment:disabled{opacity:1;cursor:default}
 .summary-number{font:12px var(--mono);color:#9cabaf}
@@ -99,3 +103,34 @@
   .clip-layout:not(.dual) .workspace{grid-template-columns:190px minmax(0,1fr) 340px}
   .clip-layout:not(.dual) .shortcut-key{display:block}
 }
+
+.youtube-form{padding:12px 16px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.youtube-form>label{display:block;font-size:14px;color:#bbc5ca;margin-bottom:8px}
+.youtube-url-row{display:flex;gap:8px}
+.youtube-url-row input{flex:1;width:100%;min-width:0;font-size:14px}
+.youtube-note{padding:12px 16px;margin:0;font-size:14px;line-height:1.5;color:#f1dea6;background:#302b1d}
+.youtube-stage{position:absolute;inset:0;width:100%;height:100%;min-height:200px}
+.youtube-stage iframe{display:block;border:0;width:100%;height:100%}
+@container clip (max-width:560px){.youtube-url-row{flex-wrap:wrap}.youtube-url-row input{flex-basis:100%}.youtube-url-row button{width:100%}}
+
+.source-track.youtube-source .thumbnails{opacity:1}
+.source-track.youtube-source .thumbnails img{flex:0 0 88px;width:88px;object-fit:cover}
+.source-track.youtube-source .track-label{left:100px;max-width:calc(100% - 110px)}
+
+/* Source selection lives in the empty monitor instead of above it. */
+.empty-video{position:relative;z-index:2;width:100%;max-width:490px;padding:18px 24px}
+.empty-video h2{margin-bottom:6px}
+.empty-video>p{margin-bottom:14px}
+.empty-video .format-note{margin-top:8px}
+.empty-video .youtube-form{padding:12px 0 0;margin:12px 0 0;border-top:1px solid var(--line);border-bottom:0;text-align:left}
+.empty-video .youtube-form>label{margin-bottom:6px}
+.choosing-source .empty-video{background:#101416f5;border:1px solid var(--line);border-radius:8px}
+.speed-display{font:13px var(--mono);color:var(--accent);min-width:4ch}
+@container clip (max-width:560px){.empty-video{padding:16px}.empty-video .youtube-url-row{flex-wrap:nowrap}.empty-video .youtube-url-row input{flex-basis:auto}.empty-video .youtube-url-row button{width:auto;padding:9px;font-size:12px}}
+
+.video-stage.twitch-source{min-height:300px}
+.youtube-stage>div{width:100%;height:100%}
+.youtube-stage.twitch-too-small{visibility:hidden}
+.twitch-size-hint{position:relative;z-index:1;margin:24px;text-align:center;max-width:300px;font-size:14px;line-height:1.6;color:var(--muted)}
+
+.preview-status{font-size:13px;color:var(--accent)}

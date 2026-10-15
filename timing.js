@@ -46,9 +46,9 @@ function csvCell(value) {
 }
 export function makeCsv(project) {
   const fps = parseRate(project.frameRate);
-  const rows = [['segment', 'name', 'in_timecode', 'out_timecode_exclusive', 'in_frame', 'out_frame_exclusive', 'duration_frames', 'duration_seconds', 'duration', 'source_file', 'source_fps', 'duration_format']];
-  project.segments.forEach((s, i) => rows.push([i + 1, s.name, timecode(s.in, fps), timecode(s.out, fps), s.in, s.out, s.out - s.in, ((s.out - s.in) / fps).toFixed(6), formatDuration(s.out - s.in, fps, project.durationDisplay), project.source.name, fps, project.durationDisplay === 'frames' ? 'HH:MM:SS:FF (non-drop-frame)' : 'HH:MM:SS.mmm']));
+  const rows = [['segment', 'name', 'in_timecode', 'out_timecode_exclusive', 'in_frame', 'out_frame_exclusive', 'duration_frames', 'duration_seconds', 'duration', 'source_file', 'source_fps', 'duration_format', 'source_type', 'source_url']];
+  project.segments.forEach((s, i) => rows.push([i + 1, s.name, timecode(s.in, fps), timecode(s.out, fps), s.in, s.out, s.out - s.in, ((s.out - s.in) / fps).toFixed(6), formatDuration(s.out - s.in, fps, project.durationDisplay), project.source.name, fps, project.durationDisplay === 'frames' ? 'HH:MM:SS:FF (non-drop-frame)' : 'HH:MM:SS.mmm', project.source.kind || 'local', project.source.url || '']));
   const total = summarize(project.segments, fps);
-  rows.push(['TOTAL', '', '', '', '', '', total.frames, total.seconds.toFixed(6), formatDuration(total.frames, fps, project.durationDisplay), project.source.name, fps, project.durationDisplay === 'frames' ? 'HH:MM:SS:FF (non-drop-frame)' : 'HH:MM:SS.mmm']);
+  rows.push(['TOTAL', '', '', '', '', '', total.frames, total.seconds.toFixed(6), formatDuration(total.frames, fps, project.durationDisplay), project.source.name, fps, project.durationDisplay === 'frames' ? 'HH:MM:SS:FF (non-drop-frame)' : 'HH:MM:SS.mmm', project.source.kind || 'local', project.source.url || '']);
   return '\uFEFF' + rows.map(row => row.map(csvCell).join(',')).join('\r\n');
 }

@@ -47,6 +47,26 @@ const selectors = [first, second].map((root, index) => {
   button.addEventListener('click', activate);
   return button;
 });
+// Each remote player is a separate document, so its focused iframe receives keystrokes
+// instead of our document. Select that clip, then return focus to its monitor
+// after the click completes, without scrolling or blocking player pointer UI.
+let playerFocusTimer;
+function returnPlayerFocus() {
+  const embedded = document.activeElement;
+  if (embedded?.tagName !== 'IFRAME' || !embedded.closest('.youtube-stage')) return;
+  const workspace = embedded.closest('.clip-workspace');
+  if (workspace !== first && workspace !== second) return;
+  active = workspace; updateSelection();
+  clearTimeout(playerFocusTimer);
+  playerFocusTimer = setTimeout(() => {
+    if (document.activeElement !== embedded || document.hidden || !document.hasFocus() || document.fullscreenElement || workspace.hidden) return;
+    workspace.querySelector('.video-stage').focus({ preventScroll: true });
+  }, 200);
+}
+window.addEventListener('blur', () => setTimeout(returnPlayerFocus, 0));
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement) returnPlayerFocus();
+});
 function updateSelection() {
   selectors.forEach((button, index) => {
     const selected = active === [first, second][index];

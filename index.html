@@ -27,6 +27,8 @@
           <div><dt><kbd>Space</kbd></dt><dd>Play / pause</dd></div>
           <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Step 1 frame</dd></div>
           <div><dt><kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd></dt><dd>Step 10 frames</dd></div>
+          <div><dt><kbd>S</kbd> / <kbd>D</kbd></dt><dd>Speed − / + 0.25×</dd></div>
+          <div><dt><kbd>Ctrl</kbd> + <kbd>←</kbd> <kbd>→</kbd></dt><dd>Jump 5 seconds</dd></div>
           <div><dt><kbd>I</kbd></dt><dd>Set in point</dd></div>
           <div><dt><kbd>O</kbd></dt><dd>Set out point</dd></div>
           <div><dt><kbd>Enter</kbd></dt><dd>Add / save segment</dd></div>
@@ -40,10 +42,16 @@
       </aside>
       <div class="viewer-panel panel">
         <div class="panel-heading"><span><span class="tiny-square" aria-hidden="true"></span> SOURCE MONITOR</span><span id="resolution">NO VIDEO LOADED</span></div>
-        <div class="video-stage" id="dropZone">
+        <div class="video-stage" id="dropZone" tabindex="-1" aria-label="Video source monitor">
+          <div id="youtubeStage" class="youtube-stage" hidden></div>
           <video id="video" playsinline preload="auto" hidden></video>
           <div class="empty-video" id="emptyVideo">
-            <h2>Open a video to begin</h2><p>Drop a video here to start marking segments.</p><button class="button secondary" id="chooseVideo">Choose video</button><span class="format-note">MP4, WebM, MOV · browser-supported codecs</span>
+            <h2>Open a video to begin</h2><p>Drop a video here to start marking segments.</p><button class="button secondary" id="chooseVideo">Choose video</button><button id="cancelSource" class="button subtle" type="button" hidden>Cancel</button><span class="format-note">MP4, WebM, MOV · browser-supported codecs</span>
+        <form id="youtubeForm" class="youtube-form">
+          <label for="youtubeUrl">YouTube or Twitch URL</label>
+          <div class="youtube-url-row"><input id="youtubeUrl" type="url" placeholder="YouTube video or twitch.tv/videos/…" autocomplete="off" required><button id="pasteYoutubeUrl" class="button secondary" type="button" aria-label="Paste video URL">Paste</button><button class="button secondary" type="submit">Load video</button></div>
+        </form>
+
           </div>
           <div class="drop-overlay">Drop video to open</div>
         </div>
@@ -51,8 +59,12 @@
           <div class="time-display"><span id="currentTime">00:00:00:00</span><span class="time-divider">/</span><span id="durationTime" class="muted">00:00:00:00</span></div>
           <div class="transport-buttons"><button id="prevFrame" class="icon-button" aria-label="Previous frame" title="Previous frame (←)" disabled>│◀</button><button id="playPause" class="play-button" aria-label="Play" title="Play / pause (Space)" disabled>▶</button><button id="nextFrame" class="icon-button" aria-label="Next frame" title="Next frame (→)" disabled>▶│</button></div>
           <div class="volume-control"><label for="volumeSlider">Volume</label><input id="volumeSlider" type="range" min="0" max="100" step="1" value="100" aria-valuetext="100%"><output id="volumeValue" for="volumeSlider">100%</output></div>
+          <output id="playbackSpeed" class="speed-display" aria-label="Playback speed" title="S / D: change speed by 0.25×">1×</output>
+          <button id="changeSource" class="button secondary" type="button" disabled>Change source</button>
+          <span id="previewStatus" class="preview-status" role="status" hidden>Updating preview…</span>
           <span id="framePosition" class="frame-position">FRAME —</span>
         </div>
+        <p id="youtubeNote" class="youtube-note" hidden>Online-video seeking is approximate; frame numbers use your selected FPS. Use a local clip for frame accuracy. Timer shortcuts resume automatically after interacting with the player.</p>
         <section class="segment-summary" aria-label="Segment times">
           <div class="summary-heading"><h2>Segment times <span id="summaryCount" class="count-badge">0</span></h2><span id="summaryFormat">HH:MM:SS.mmm</span></div>
           <p id="summaryEmpty">Your marked segment times will appear here.</p>
