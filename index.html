@@ -19,7 +19,7 @@
   </header>
   <main>
     <div class="workspace-heading"><div><span class="eyebrow">WORKSPACE</span><h1 id="projectTitle">Untitled session</h1></div><div class="session-options"><div class="file-meta" id="fileMeta">Open a video to start marking load segments.</div><label class="display-control" for="durationDisplay">Duration display <select id="durationDisplay"><option value="milliseconds">Milliseconds · .000</option><option value="frames">Frames · HH:MM:SS:FF</option></select></label></div></div>
-    <div id="message" role="status" aria-live="polite" hidden></div>
+    <div id="message" class="dismissible-notice" role="status" aria-live="polite" hidden><span id="messageText"></span><button id="dismissMessage" class="notice-dismiss" type="button" aria-label="Dismiss alert" title="Dismiss alert">&times;</button></div>
     <section class="workspace" aria-label="Video and segment controls">
       <aside class="shortcut-key" aria-label="Keyboard shortcuts">
         <h2>Keyboard shortcuts</h2>
@@ -64,7 +64,7 @@
           <span id="previewStatus" class="preview-status" role="status" hidden>Updating preview…</span>
           <span id="framePosition" class="frame-position">FRAME —</span>
         </div>
-        <p id="youtubeNote" class="youtube-note" hidden>Online-video seeking is approximate; frame numbers use your selected FPS. Use a local clip for frame accuracy. Timer shortcuts resume automatically after interacting with the player.</p>
+        <div id="youtubeNote" class="youtube-note dismissible-notice" hidden><span>Online-video seeking is approximate; frame numbers use your selected FPS. Use a local clip for frame accuracy. Timer shortcuts resume automatically after interacting with the player.</span><button id="dismissYoutubeNote" class="notice-dismiss" type="button" aria-label="Dismiss online-video notice" title="Dismiss notice">&times;</button></div>
         <section class="segment-summary" aria-label="Segment times">
           <div class="summary-heading"><h2>Segment times <span id="summaryCount" class="count-badge">0</span></h2><span id="summaryFormat">HH:MM:SS.mmm</span></div>
           <p id="summaryEmpty">Your marked segment times will appear here.</p>

@@ -88,7 +88,13 @@ let fps = 30, segments = [], draft = { in: null, out: null }, editing = null;
 let serial = 1, drag = null, loadSerial = 0, thumbnailVideo = null, awaitingSource = false;
 let playbackCallback = null;
 
-function notice(text = '') { $('message').textContent = text; $('message').hidden = !text; }
+function notice(text = '') { $('messageText').textContent = text; $('message').hidden = !text; }
+for (const [button, box] of [['dismissMessage', 'message'], ['dismissYoutubeNote', 'youtubeNote']]) {
+  $(button).addEventListener('click', () => {
+    $(box).hidden = true;
+    $('dropZone').focus({ preventScroll: true });
+  });
+}
 function rateValue() { return $('fpsSelect').value; }
 function durationMode() { return $('durationDisplay').value; }
 function displayDuration(frames) { return formatDuration(frames, fps, durationMode()); }
